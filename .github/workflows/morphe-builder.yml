@@ -29,20 +29,22 @@ jobs:
 
       - name: Download Morphe Tools
         run: |
-          # Download ekosistem resmi Morphe
-          wget -qO build/cli.jar https://github.com/morphe-org/morphe-cli/releases/latest/download/cli.jar
-          wget -qO build/patches.jar https://github.com/morphe-org/morphe-patches/releases/latest/download/patches.jar
-          wget -qO build/integrations.apk https://github.com/morphe-org/morphe-integrations/releases/latest/download/app-release-unsigned.apk
+          # 1. Ambil URL rilis terbaru langsung dari repository resmi MorpheApp
+          CLI_URL=$(curl -s https://api.github.com/repos/MorpheApp/morphe-cli/releases/latest | jq -r '.assets[] | select(.name | endswith(".jar")) | .browser_download_url')
+          PATCHES_URL=$(curl -s https://api.github.com/repos/MorpheApp/morphe-patches/releases/latest | jq -r '.assets[] | select(.name | endswith(".mpp")) | .browser_download_url')
           
-          # Download apksigner resmi dari Android SDK Build-Tools
+          # 2. Download CLI dan Patches
+          wget -qO build/cli.jar "$CLI_URL"
+          wget -qO build/patches.mpp "$PATCHES_URL"
           wget -qO build/apksigner.jar https://github.com/patrickfav/uber-apk-signer/releases/latest/download/uber-apk-signer-1.3.0.jar
+          
+          # 3. Ekstrak file patches.json dari dalam .mpp untuk dibaca script pencari versi
+          unzip -p build/patches.mpp patches.json > build/patches.json
 
       - name: Cari Versi Experimental Target
         run: |
-          # Menggunakan alat bantu 'jq' untuk mengupas patches.json 
-          # dan mencari angka versi tertinggi (experimental) dari YouTube yang didukung
           YT_VERSION=$(jq -r '[.. | objects | select(.name == "com.google.android.youtube" and .versions != null) | .versions[]] | unique | sort_by(split(".") | map(tonumber)) | last' build/patches.json)
-          echo "Versi YouTube experimental dari Morphe: $YT_VERSION"
+          echo "Versi YouTube dari Morphe: $YT_VERSION"
           echo "YT_VERSION=$YT_VERSION" >> $GITHUB_ENV
 
       - name: Setup Node.js (Untuk Downloader APKMirror)
@@ -52,28 +54,20 @@ jobs:
 
       - name: Download YouTube Vanilla dari APKMirror
         run: |
-          # Menginstal library CLI apkmirror-downloader
           npm install -g apkmirror-downloader
-          
-          # Eksekusi download otomatis berdasarkan versi target
-          # Parameter --type "apk" wajib dipakai agar tidak mengunduh format bundle .apkm
           apkmd "YouTube" --version "$YT_VERSION" --arch "universal" --dpi "nodpi" --type "apk" --outDir "build"
-          
-          # Ubah nama hasil download jadi youtube-vanilla.apk biar selaras dengan script patching
           mv build/*.apk build/youtube-vanilla.apk
 
-      - name: Jalankan Proses Patching Morphe (Experimental)
+      - name: Jalankan Proses Patching Morphe
         run: |
-          # Tambahan parameter --experimental wajib dimasukkan agar CLI mau memproses versi terbaru
+          # Integrations sudah dihapus karena format .mpp sudah mencakup semuanya
           java -jar build/cli.jar patch \
-            --patches build/patches.jar \
-            --merge build/integrations.apk \
+            --patches build/patches.mpp \
             -e "Custom branding" \
             -e "Change package name" \
             --experimental \
             --out build/youtube-morphe-unsigned.apk \
             build/youtube-vanilla.apk
-            
       - name: Sign APK dengan Custom Keystore
         run: |
           # Proses signing menggunakan rahasia dari GitHub Secrets

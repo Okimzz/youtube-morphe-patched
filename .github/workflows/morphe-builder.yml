@@ -1,0 +1,48 @@
+name: Auto Build Morphe Patches
+
+# Script ini akan jalan otomatis tiap hari Minggu jam 00:00 UTC, atau bisa dipencet manual
+on:
+  schedule:
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Wajib agar bot bisa bikin Release baru
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java (Wajib untuk Patcher)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'zulu'
+
+      - name: Siapkan Folder Build
+        run: mkdir -p build
+
+      # --- BAGIAN INI NANTI KITA ISI DENGAN LINK DOWNLOAD APK & PATCH ---
+      - name: Download Tools & Target APK
+        run: |
+          echo "Proses download CLI, Patches (misal: hoo-dles), dan APK target akan ditaruh di sini."
+          # Contoh: wget -qO build/cli.jar [LINK_CLI]
+          # Contoh: wget -qO build/app.apk [LINK_APK_TARGET]
+
+      - name: Jalankan Proses Patching
+        run: |
+          echo "Proses eksekusi patch via command line berjalan di sini..."
+          # Contoh: java -jar build/cli.jar patch -p build/patches.jar -a build/app.apk -o build/patched-app.apk
+
+      # --- UPLOAD HASILNYA KE GITHUB RELEASE ---
+      - name: Upload APK ke Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ github.run_number }}
+          name: "Update Morphe Patched - Build #${{ github.run_number }}"
+          files: build/patched-app.apk
+          draft: false
+          prerelease: false

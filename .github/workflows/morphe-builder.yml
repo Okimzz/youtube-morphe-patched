@@ -1,48 +1,75 @@
-name: Auto Build Morphe Patches
+name: Auto Build Morphe YouTube
 
-# Script ini akan jalan otomatis tiap hari Minggu jam 00:00 UTC, atau bisa dipencet manual
 on:
   schedule:
-    - cron: '0 0 * * 0'
+    - cron: '0 0 * * 0' # Jalan tiap Minggu jam 00:00 UTC
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Wajib agar bot bisa bikin Release baru
+      contents: write
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Java (Wajib untuk Patcher)
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'zulu'
 
-      - name: Siapkan Folder Build
-        run: mkdir -p build
-
-      # --- BAGIAN INI NANTI KITA ISI DENGAN LINK DOWNLOAD APK & PATCH ---
-      - name: Download Tools & Target APK
+      - name: Siapkan Folder & Keystore
         run: |
-          echo "Proses download CLI, Patches (misal: hoo-dles), dan APK target akan ditaruh di sini."
-          # Contoh: wget -qO build/cli.jar [LINK_CLI]
-          # Contoh: wget -qO build/app.apk [LINK_APK_TARGET]
+          mkdir -p build
+          # Mengambil keystore rahasia dari GitHub Secrets dan mengembalikannya ke bentuk file
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > build/my-keystore.jks
 
-      - name: Jalankan Proses Patching
+      - name: Download Morphe Tools
         run: |
-          echo "Proses eksekusi patch via command line berjalan di sini..."
-          # Contoh: java -jar build/cli.jar patch -p build/patches.jar -a build/app.apk -o build/patched-app.apk
+          # Download ekosistem resmi Morphe
+          wget -qO build/cli.jar https://github.com/morphe-org/morphe-cli/releases/latest/download/cli.jar
+          wget -qO build/patches.jar https://github.com/morphe-org/morphe-patches/releases/latest/download/patches.jar
+          wget -qO build/integrations.apk https://github.com/morphe-org/morphe-integrations/releases/latest/download/app-release-unsigned.apk
+          
+          # Download apksigner resmi dari Android SDK Build-Tools
+          wget -qO build/apksigner.jar https://github.com/patrickfav/uber-apk-signer/releases/latest/download/uber-apk-signer-1.3.0.jar
 
-      # --- UPLOAD HASILNYA KE GITHUB RELEASE ---
-      - name: Upload APK ke Release
+      - name: Download APK YouTube Vanilla
+        run: |
+          # Untuk YouTube, kita butuh versi spesifik yang didukung Morphe saat ini.
+          # (Contoh menggunakan tool apkeep atau link direct, di sini kita asumsikan kamu sudah upload vanilla.apk ke repo)
+          echo "Menyiapkan APK YouTube Vanilla..."
+          # cp vanilla.apk build/youtube-vanilla.apk
+
+      - name: Jalankan Proses Patching Morphe
+        run: |
+          # Secara default CLI menginstal semua patch rekomendasi.
+          # Kita pakai -e (--exclude) untuk membuang patch yang tidak diinginkan.
+          java -jar build/cli.jar patch \
+            --patches build/patches.jar \
+            --merge build/integrations.apk \
+            -e "Custom branding" \
+            -e "Change package name" \
+            --out build/youtube-morphe-unsigned.apk \
+            build/youtube-vanilla.apk
+            
+      - name: Sign APK dengan Custom Keystore
+        run: |
+          # Proses signing menggunakan rahasia dari GitHub Secrets
+          java -jar build/apksigner.jar -a build/youtube-morphe-unsigned.apk \
+            --ks build/my-keystore.jks \
+            --ksAlias "${{ secrets.KEYSTORE_ALIAS }}" \
+            --ksPass "pass:${{ secrets.KEYSTORE_PASSWORD }}" \
+            --ksKeyPass "pass:${{ secrets.KEYSTORE_PASSWORD }}" \
+            --allowResign --overwrite
+      - name: Upload Morphe YouTube ke Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v${{ github.run_number }}
-          name: "Update Morphe Patched - Build #${{ github.run_number }}"
-          files: build/patched-app.apk
+          tag_name: Morphe-YT-${{ github.run_number }}
+          name: "Morphe YouTube - Build #${{ github.run_number }}"
+          files: build/*-aligned-debugSigned.apk
           draft: false
           prerelease: false

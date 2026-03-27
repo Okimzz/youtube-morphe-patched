@@ -2,7 +2,7 @@ name: Auto Build Morphe YouTube
 
 on:
   schedule:
-    - cron: '0 0 * * 0' # Jalan tiap Minggu jam 00:00 UTC
+    - cron: '0 0 * * 0'
   workflow_dispatch:
 
 jobs:
@@ -15,53 +15,78 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y jq
+
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'zulu'
 
-      - name: Siapkan Folder & Keystore
+      - name: Setup Keystore
         run: |
           mkdir -p build
-          # Mengambil keystore rahasia dari GitHub Secrets dan mengembalikannya ke bentuk file
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > build/my-keystore.jks
 
       - name: Download Morphe Tools
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Ambil URL rilis terbaru (termasuk file patches.json murni)
-          CLI_URL=$(curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/MorpheApp/morphe-cli/releases/latest | jq -r '.assets[] | select(.name | endswith(".jar")) | .browser_download_url')
-          PATCHES_URL=$(curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/MorpheApp/morphe-patches/releases/latest | jq -r '.assets[] | select(.name | endswith(".mpp")) | .browser_download_url')
-          JSON_URL=$(curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/MorpheApp/morphe-patches/releases/latest | jq -r '.assets[] | select(.name | endswith(".json")) | .browser_download_url')
-          
+          CLI_URL=$(curl -s https://api.github.com/repos/MorpheApp/morphe-cli/releases/latest | jq -r '.assets[] | select(.name | endswith(".jar")) | .browser_download_url')
+          PATCHES_URL=$(curl -s https://api.github.com/repos/MorpheApp/morphe-patches/releases/latest | jq -r '.assets[] | select(.name | endswith(".mpp")) | .browser_download_url')
+          JSON_URL=$(curl -s https://api.github.com/repos/MorpheApp/morphe-patches/releases/latest | jq -r '.assets[] | select(.name | endswith(".json")) | .browser_download_url')
+
+          if [ -z "$CLI_URL" ] || [ -z "$PATCHES_URL" ] || [ -z "$JSON_URL" ]; then
+            echo "Gagal ambil asset dari GitHub"
+            exit 1
+          fi
+
           wget -qO build/cli.jar "$CLI_URL"
           wget -qO build/patches.mpp "$PATCHES_URL"
           wget -qO build/patches.json "$JSON_URL"
           wget -qO build/apksigner.jar https://github.com/patrickfav/uber-apk-signer/releases/latest/download/uber-apk-signer-1.3.0.jar
 
-      - name: Cari Versi Target Otomatis
+      - name: Detect YouTube Version
         run: |
-          # Membaca daftar versi langsung dari patches.json yang bersih
           YT_VERSION=$(jq -r '[.. | objects | select(.name == "com.google.android.youtube" and .versions != null) | .versions[]] | unique | sort_by(split(".") | map(tonumber)) | last' build/patches.json)
-          
-          echo "Versi target tertinggi dari Morphe saat ini: $YT_VERSION"
-          echo "YT_VERSION=$YT_VERSION" >> $GITHUB_ENV
 
-      - name: Setup Node.js (Untuk Downloader APKMirror)
+          if [ -z "$YT_VERSION" ]; then
+            echo "Gagal ambil versi YouTube"
+            exit 1
+          fi
+
+          echo "YT_VERSION=$YT_VERSION" >> $GITHUB_ENV
+          echo "Target version: $YT_VERSION"
+
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Download YouTube Vanilla
+      - name: Download YouTube APK
         run: |
           npm install -g apkmirror-downloader
-          # Bot akan mendownload secara presisi berdasarkan versi tertinggi hasil deteksi di atas
-          apkmd "YouTube" --version "$YT_VERSION" --arch "universal" --dpi "nodpi" --type "apk" --outDir "build"
-          mv build/*.apk build/youtube-vanilla.apk
 
-      - name: Jalankan Proses Patching Morphe
+          apkmd "YouTube" \
+            --version "$YT_VERSION" \
+            --arch "universal" \
+            --dpi "nodpi" \
+            --type "apk" \
+            --outDir "build"
+
+          FILE=$(ls build/*.apk | head -n 1)
+
+          if [ -z "$FILE" ]; then
+            echo "APK tidak ditemukan!"
+            exit 1
+          fi
+
+          mv "$FILE" build/youtube-vanilla.apk
+
+      - name: Patch APK
         run: |
           java -jar build/cli.jar patch \
             --patches build/patches.mpp \
@@ -70,20 +95,26 @@ jobs:
             --experimental \
             --out build/youtube-morphe-unsigned.apk \
             build/youtube-vanilla.apk
-      - name: Sign APK dengan Custom Keystore
+
+      - name: Sign APK
         run: |
-          # Proses signing menggunakan rahasia dari GitHub Secrets
-          java -jar build/apksigner.jar -a build/youtube-morphe-unsigned.apk \
+          java -jar build/apksigner.jar \
+            -a build/youtube-morphe-unsigned.apk \
             --ks build/my-keystore.jks \
             --ksAlias "${{ secrets.KEYSTORE_ALIAS }}" \
             --ksPass "pass:${{ secrets.KEYSTORE_PASSWORD }}" \
             --ksKeyPass "pass:${{ secrets.KEYSTORE_PASSWORD }}" \
             --allowResign --overwrite
-      - name: Upload Morphe YouTube ke Release
+
+          # Rename hasil signer biar konsisten
+          SIGNED_FILE=$(ls build/*signed.apk | head -n 1)
+          mv "$SIGNED_FILE" build/youtube-morphe.apk
+
+      - name: Upload Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: Morphe-YT-${{ github.run_number }}
           name: "Morphe YouTube - Build #${{ github.run_number }}"
-          files: build/*-aligned-debugSigned.apk
+          files: build/youtube-morphe.apk
           draft: false
           prerelease: false

@@ -37,22 +37,40 @@ jobs:
           # Download apksigner resmi dari Android SDK Build-Tools
           wget -qO build/apksigner.jar https://github.com/patrickfav/uber-apk-signer/releases/latest/download/uber-apk-signer-1.3.0.jar
 
-      - name: Download APK YouTube Vanilla
+      - name: Cari Versi Experimental Target
         run: |
-          # Untuk YouTube, kita butuh versi spesifik yang didukung Morphe saat ini.
-          # (Contoh menggunakan tool apkeep atau link direct, di sini kita asumsikan kamu sudah upload vanilla.apk ke repo)
-          echo "Menyiapkan APK YouTube Vanilla..."
-          # cp vanilla.apk build/youtube-vanilla.apk
+          # Menggunakan alat bantu 'jq' untuk mengupas patches.json 
+          # dan mencari angka versi tertinggi (experimental) dari YouTube yang didukung
+          YT_VERSION=$(jq -r '[.. | objects | select(.name == "com.google.android.youtube" and .versions != null) | .versions[]] | unique | sort_by(split(".") | map(tonumber)) | last' build/patches.json)
+          echo "Versi YouTube experimental dari Morphe: $YT_VERSION"
+          echo "YT_VERSION=$YT_VERSION" >> $GITHUB_ENV
 
-      - name: Jalankan Proses Patching Morphe
+      - name: Setup Node.js (Untuk Downloader APKMirror)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Download YouTube Vanilla dari APKMirror
         run: |
-          # Secara default CLI menginstal semua patch rekomendasi.
-          # Kita pakai -e (--exclude) untuk membuang patch yang tidak diinginkan.
+          # Menginstal library CLI apkmirror-downloader
+          npm install -g apkmirror-downloader
+          
+          # Eksekusi download otomatis berdasarkan versi target
+          # Parameter --type "apk" wajib dipakai agar tidak mengunduh format bundle .apkm
+          apkmd "YouTube" --version "$YT_VERSION" --arch "universal" --dpi "nodpi" --type "apk" --outDir "build"
+          
+          # Ubah nama hasil download jadi youtube-vanilla.apk biar selaras dengan script patching
+          mv build/*.apk build/youtube-vanilla.apk
+
+      - name: Jalankan Proses Patching Morphe (Experimental)
+        run: |
+          # Tambahan parameter --experimental wajib dimasukkan agar CLI mau memproses versi terbaru
           java -jar build/cli.jar patch \
             --patches build/patches.jar \
             --merge build/integrations.apk \
             -e "Custom branding" \
             -e "Change package name" \
+            --experimental \
             --out build/youtube-morphe-unsigned.apk \
             build/youtube-vanilla.apk
             

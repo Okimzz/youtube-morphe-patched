@@ -28,24 +28,25 @@ jobs:
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > build/my-keystore.jks
 
       - name: Download Morphe Tools
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 1. Ambil URL rilis terbaru (CLI, MPP, dan JSON) langsung dari repository resmi
-          CLI_URL=$(curl -s https://api.github.com/repos/MorpheApp/morphe-cli/releases/latest | jq -r '.assets[] | select(.name | endswith(".jar")) | .browser_download_url')
-          PATCHES_URL=$(curl -s https://api.github.com/repos/MorpheApp/morphe-patches/releases/latest | jq -r '.assets[] | select(.name | endswith(".mpp")) | .browser_download_url')
-          JSON_URL=$(curl -s https://api.github.com/repos/MorpheApp/morphe-patches/releases/latest | jq -r '.assets[] | select(.name | endswith(".json")) | .browser_download_url')
+          CLI_URL=$(curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/MorpheApp/morphe-cli/releases/latest | jq -r '.assets[] | select(.name | endswith(".jar")) | .browser_download_url')
+          PATCHES_URL=$(curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/MorpheApp/morphe-patches/releases/latest | jq -r '.assets[] | select(.name | endswith(".mpp")) | .browser_download_url')
           
-          # 2. Download semua file yang dibutuhkan
           wget -qO build/cli.jar "$CLI_URL"
           wget -qO build/patches.mpp "$PATCHES_URL"
-          wget -qO build/patches.json "$JSON_URL"
           wget -qO build/apksigner.jar https://github.com/patrickfav/uber-apk-signer/releases/latest/download/uber-apk-signer-1.3.0.jar
-          
-          # Baris perintah unzip sudah kita hapus sepenuhnya karena sudah tidak diperlukan
 
-      - name: Cari Versi Experimental Target
+      - name: Cari Versi Target Otomatis
         run: |
+          # Menyuruh Morphe CLI mengekstrak daftar patch ke format JSON
+          java -jar build/cli.jar list-patches --patches build/patches.mpp --out build/patches.json
+          
+          # Script ini akan menyortir semua versi yang didukung dan selalu mengambil yang tertinggi (last)
           YT_VERSION=$(jq -r '[.. | objects | select(.name == "com.google.android.youtube" and .versions != null) | .versions[]] | unique | sort_by(split(".") | map(tonumber)) | last' build/patches.json)
-          echo "Versi YouTube dari Morphe: $YT_VERSION"
+          
+          echo "Versi target tertinggi dari Morphe saat ini: $YT_VERSION"
           echo "YT_VERSION=$YT_VERSION" >> $GITHUB_ENV
 
       - name: Setup Node.js (Untuk Downloader APKMirror)
@@ -53,15 +54,15 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Download YouTube Vanilla dari APKMirror
+      - name: Download YouTube Vanilla
         run: |
           npm install -g apkmirror-downloader
+          # Bot akan mendownload secara presisi berdasarkan versi tertinggi hasil deteksi di atas
           apkmd "YouTube" --version "$YT_VERSION" --arch "universal" --dpi "nodpi" --type "apk" --outDir "build"
           mv build/*.apk build/youtube-vanilla.apk
 
       - name: Jalankan Proses Patching Morphe
         run: |
-          # Integrations sudah dihapus karena format .mpp sudah mencakup semuanya
           java -jar build/cli.jar patch \
             --patches build/patches.mpp \
             -e "Custom branding" \
